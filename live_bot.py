@@ -18,7 +18,7 @@ def send_telegram(message):
 
 model = joblib.load(MODEL_PATH)
 
-send_telegram("🤖 *تم تشغيل بوت مؤشر آسيا (1M) بنجاح مع تتبع النتائج!*\n📊 جاري مراقبة السوق وإرسال النتيجة بعد كل إشارة...")
+send_telegram("🤖 *تم تشغيل بوت مؤشر آسيا (1M) بنجاح!*\n📊 جاري مراقبة السوق لإشارات بقدرة 70%+...")
 
 while True:
     try:
@@ -26,6 +26,7 @@ while True:
         res = requests.get(url, timeout=10).json()
         df = pd.DataFrame(res['data'])
         
+        # Calculate features (matching model training)
         df['returns'] = df['close'].pct_change()
         df['sma_5'] = df['close'].rolling(5).mean()
         df['sma_20'] = df['close'].rolling(20).mean()
@@ -39,41 +40,18 @@ while True:
         prediction = model.predict(features)[0]
         
         if confidence >= 0.70:
-            entry_price = latest_data['close']
             action = "صعود (CALL 📈)" if prediction == 1 else "هبوط (PUT 📉)"
-            is_call = (prediction == 1)
-            
             msg = (
                 f"🚨 *إشارة تداول عالية الثقة* 🚨\n\n"
                 f"📊 *الأصل:* مؤشر آسيا المركب (1M)\n"
                 f"🎯 *القرار:* {action}\n"
-                f"💰 *سعر الدخول:* {entry_price}\n"
+                f"💰 *السعر الحالي:* {latest_data['close']}\n"
                 f"📈 *نسبة التأكيد:* {confidence*100:.2f}%\n"
-                f"⏰ *الوقت:* {time.strftime('%H:%M:%S')}\n\n"
-                f"👉 *سيتم متابعة النتيجة بعد دقيقة واحدة...*"
+                f"⏰ *الحديث:* {time.strftime('%H:%M:%S')}\n\n"
+                f"👉 *نفذ الصفقة على أوليمب تريد الآن!*"
             )
             send_telegram(msg)
-            
-            # الانتظار لمدة دقيقة واحدة لفحص نتيجة الشمعة التالية
             time.sleep(60)
-            
-            # جلب السعر الجديد بعد دقيقة لمعرفة النتيجة
-            res_after = requests.get(url, timeout=10).json()
-            df_after = pd.DataFrame(res_after['data'])
-            exit_price = df_after.iloc[-1]['close']
-            
-            # تحديد الربح أو الخسارة
-            if is_call:
-                won = exit_price > entry_price
-            else:
-                won = exit_price < entry_price
-                
-            if won:
-                result_msg = f"✅ *نتيجة الصفقة: ربح (WIN 🟢)*\n💰 سعر الدخول: {entry_price}\n🎯 سعر الخروج: {exit_price}"
-            else:
-                result_msg = f"❌ *نتيجة الصفقة: خسارة (LOSS 🔴)*\n💰 سعر الدخول: {entry_price}\n🎯 سعر الخروج: {exit_price}"
-                
-            send_telegram(result_msg)
         else:
             time.sleep(10)
             
