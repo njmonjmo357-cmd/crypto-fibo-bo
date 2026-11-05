@@ -1,93 +1,82 @@
 ﻿import time
+import requests
+import joblib
 import pandas as pd
 import numpy as np
-import joblib
-import sys
-import urllib.request
-import urllib.parse
-import json
 
-print('==================================================')
-print('  ASIA INDEX 1M: TELEGRAM LIVE SIGNAL BOT (70%+)  ')
-print('==================================================')
+TOKEN = "9052325215"
+CHAT_ID = "1826515593"
+MODEL_PATH = "trading_ai_model.pkl"
 
-# Telegram Bot Credentials
-TOKEN = '9052325215:AAG8uq_OxR09CzcePXVCdIIlw6PmKyHTLAo'
-CHAT_ID = '1826515593'
-
-def send_telegram_message(message):
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
-        data = urllib.parse.urlencode({'chat_id': CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}).encode('utf-8')
-        req = urllib.request.Request(url, data=data)
-        with urllib.request.urlopen(req) as response:
-            return response.read()
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f'[-] Telegram Error: {e}')
+        print(f"Error sending message: {e}")
 
-try:
-    model = joblib.load('trading_ai_model.pkl')
-    print('[+] Elite AI Model Loaded Successfully (Accuracy: 95.98%)')
-except Exception as e:
-    print('[-] Error loading model:', e)
-    sys.exit()
+model = joblib.load(MODEL_PATH)
 
-print('[+] Asset: Asia Composite Index (1-Minute Timeframe)')
-print('[+] Mode: Telegram Push Notifications Active (Threshold: >= 70%)')
-print('--------------------------------------------------')
+send_telegram("🤖 *تم تشغيل بوت مؤشر آسيا (1M) بنجاح مع تتبع النتائج!*\n📊 جاري مراقبة السوق وإرسال النتيجة بعد كل إشارة...")
 
-# Send startup notification to Telegram
-send_telegram_message("🤖 *Asia Index 1M Bot Started Successfully!*\n📊 Monitoring market for 70%+ signals...")
-
-signal_count = 0
-
-try:
-    while True:
-        current_time = time.strftime('%H:%M:%S', time.localtime())
-        print(f'[{current_time}] ⏳ Analyzing 1-Minute Candle completion for Asia Index...')
+while True:
+    try:
+        url = "https://api.olymptrade.com/v1/quotes/history?pair=ASIA_INDEX&tf=60&limit=50"
+        res = requests.get(url, timeout=10).json()
+        df = pd.DataFrame(res['data'])
         
-        # Real-time simulation matching Asia Composite Index price range (~6210)
-        current_price = 6210.00 + (np.random.randn() * 0.7)
+        df['returns'] = df['close'].pct_change()
+        df['sma_5'] = df['close'].rolling(5).mean()
+        df['sma_20'] = df['close'].rolling(20).mean()
+        df['rsi'] = 100 - (100 / (1 + (df['returns'].gt(0).rolling(14).sum() / df['returns'].lt(0).abs().rolling(14).sum())))
         
-        sample_data = pd.DataFrame({
-            'Return': [np.random.uniform(-0.001, 0.001)],
-            'MA3': [current_price + np.random.uniform(-0.3, 0.3)],
-            'MA10': [current_price + np.random.uniform(-0.6, 0.6)],
-            'RSI': [np.random.uniform(25, 75)],
-            'Momentum': [np.random.uniform(-0.2, 0.2)],
-            'Volatility': [np.random.uniform(0.1, 0.9)]
-        })
+        latest_data = df.iloc[-1]
+        features = [[latest_data['returns'], latest_data['sma_5'], latest_data['sma_20'], latest_data['rsi']]]
         
-        prediction = model.predict(sample_data)[0]
-        confidence = max(model.predict_proba(sample_data)[0]) * 100
-        signal_type = "CALL (UP 📈)" if prediction == 1 else "PUT (DOWN 📉)"
+        probs = model.predict_proba(features)[0]
+        confidence = max(probs)
+        prediction = model.predict(features)[0]
         
-        # Threshold: 70% confidence for signals
-        if confidence >= 70.0:
-            signal_count += 1
+        if confidence >= 0.70:
+            entry_price = latest_data['close']
+            action = "صعود (CALL 📈)" if prediction == 1 else "هبوط (PUT 📉)"
+            is_call = (prediction == 1)
+            
             msg = (
-                f"🚨 *HIGH CONFIDENCE SIGNAL #{signal_count}* 🚨\n\n"
-                f"📊 *Asset:* Asia Composite Index (1M)\n"
-                f"🎯 *Action:* {signal_type}\n"
-                f"💰 *Price:* {round(current_price, 4)}\n"
-                f"📈 *Confidence:* {round(confidence, 2)}%\n"
-                f"⏰ *Time:* {current_time}\n\n"
-                f"👉 *Execute on Olymp Trade Now!*"
+                f"🚨 *إشارة تداول عالية الثقة* 🚨\n\n"
+                f"📊 *الأصل:* مؤشر آسيا المركب (1M)\n"
+                f"🎯 *القرار:* {action}\n"
+                f"💰 *سعر الدخول:* {entry_price}\n"
+                f"📈 *نسبة التأكيد:* {confidence*100:.2f}%\n"
+                f"⏰ *الوقت:* {time.strftime('%H:%M:%S')}\n\n"
+                f"👉 *سيتم متابعة النتيجة بعد دقيقة واحدة...*"
             )
+            send_telegram(msg)
             
-            print('\n' + '='*50)
-            print(f'[{current_time}] 🎯 SIGNAL DETECTED & SENT TO TELEGRAM!')
-            print(f' >>> ACTION: {signal_type} | Conf: {round(confidence, 2)}%')
-            print('='*50 + '\n')
+            # الانتظار لمدة دقيقة واحدة لفحص نتيجة الشمعة التالية
+            time.sleep(60)
             
-            send_telegram_message(msg)
-            print("\a\a")
+            # جلب السعر الجديد بعد دقيقة لمعرفة النتيجة
+            res_after = requests.get(url, timeout=10).json()
+            df_after = pd.DataFrame(res_after['data'])
+            exit_price = df_after.iloc[-1]['close']
+            
+            # تحديد الربح أو الخسارة
+            if is_call:
+                won = exit_price > entry_price
+            else:
+                won = exit_price < entry_price
+                
+            if won:
+                result_msg = f"✅ *نتيجة الصفقة: ربح (WIN 🟢)*\n💰 سعر الدخول: {entry_price}\n🎯 سعر الخروج: {exit_price}"
+            else:
+                result_msg = f"❌ *نتيجة الصفقة: خسارة (LOSS 🔴)*\n💰 سعر الدخول: {entry_price}\n🎯 سعر الخروج: {exit_price}"
+                
+            send_telegram(result_msg)
         else:
-            print(f' -> Candle analyzed: Confidence {round(confidence, 2)}% (<70%). Waiting for next candle...')
-            print('--------------------------------------------------')
+            time.sleep(10)
             
-        time.sleep(60)
-        
-except KeyboardInterrupt:
-    print('\n[+] Bot stopped safely by user.')
-    send_telegram_message("🛑 *Asia Index Bot Stopped.*")
+    except Exception as e:
+        print(f"Loop error: {e}")
+        time.sleep(10)
